@@ -222,3 +222,70 @@ def test_generate_no_categories_fails_cleanly():
     )
     assert result.exit_code != 0
     assert "Error" in result.output
+
+
+def test_copy_puts_password_on_clipboard_and_never_prints_it(tmp_path, monkeypatch):
+    import securevault.clipboard as clipboard_module
+
+    runner = CliRunner()
+    path = str(tmp_path / "vault.dat")
+    init_vault(runner, path)
+    run(runner, ["add", path, "svc", "user"], f"{PW}\nclip-secret-value\nclip-secret-value\n")
+    entry_id = extract_entry_id(run(runner, ["list", path], f"{PW}\n").output, "svc")
+
+    captured = {}
+
+    def fake_copy_and_autoclear(secret, timeout, **kwargs):
+        captured["secret"] = secret
+        captured["timeout"] = timeout
+        return clipboard_module.ClipboardSessionResult(cleared=True, interrupted=False)
+
+    monkeypatch.setattr(clipboard_module, "copy_and_autoclear", fake_copy_and_autoclear)
+
+    result = run(runner, ["copy", path, entry_id, "--timeout", "5"], f"{PW}\n")
+    assert result.exit_code == 0, result.output
+    assert captured["secret"] == "clip-secret-value"  # the password reached the clipboard layer
+    assert captured["timeout"] == 5
+    assert "clip-secret-value" not in result.output   # but never stdout
+    assert "cleared" in result.output.lower()
+
+
+def test_copy_reports_when_clipboard_was_changed(tmp_path, monkeypatch):
+    import securevault.clipboard as clipboard_module
+
+    runner = CliRunner()
+    path = str(tmp_path / "vault.dat")
+    init_vault(runner, path)
+    run(runner, ["add", path, "svc", "user"], f"{PW}\npw\npw\n")
+    entry_id = extract_entry_id(run(runner, ["list", path], f"{PW}\n").output, "svc")
+
+    monkeypatch.setattr(
+        clipboard_module,
+        "copy_and_autoclear",
+        lambda secret, timeout, **kw: clipboard_module.ClipboardSessionResult(
+            cleared=False, interrupted=False
+        ),
+    )
+
+    result = run(runner, ["copy", path, entry_id], f"{PW}\n")
+    assert result.exit_code == 0
+    assert "left it untouched" in result.output.lower()
+
+
+def test_copy_fails_cleanly_when_no_clipboard_backend(tmp_path, monkeypatch):
+    import securevault.clipboard as clipboard_module
+
+    runner = CliRunner()
+    path = str(tmp_path / "vault.dat")
+    init_vault(runner, path)
+    run(runner, ["add", path, "svc", "user"], f"{PW}\npw\npw\n")
+    entry_id = extract_entry_id(run(runner, ["list", path], f"{PW}\n").output, "svc")
+
+    def raise_unavailable(secret, timeout, **kw):
+        raise clipboard_module.ClipboardUnavailableError("no backend")
+
+    monkeypatch.setattr(clipboard_module, "copy_and_autoclear", raise_unavailable)
+
+    result = run(runner, ["copy", path, entry_id], f"{PW}\n")
+    assert result.exit_code != 0
+    assert "no system clipboard" in result.output.lower()

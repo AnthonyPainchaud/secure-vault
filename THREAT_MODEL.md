@@ -165,9 +165,48 @@ scope.
 Once a password is *shown* in the terminal or *copied to the clipboard*, it has
 left the vault's protection: terminal scrollback, shell history, tmux/screen
 buffers, and the OS clipboard (readable by any app, often synced across devices)
-are all plaintext channels. The tool will minimize this (e.g. clipboard clearing,
-no echo) in a later stage, but it **cannot** control what the OS or other
-applications do with output. Treat displayed/copied secrets as exposed.
+are all plaintext channels. The tool minimizes this — the master password and
+entry passwords are never echoed, no secret is accepted as a command-line
+argument, and `get` masks the password unless `--show` is passed — but it
+**cannot** control what the OS or other applications do with output. Treat
+displayed/copied secrets as exposed.
+
+**N5.1 — The clipboard, specifically (the `copy` command).**
+The `copy` command trades one exposure for a smaller, time-boxed one: instead of
+printing the password to a terminal that keeps scrollback, it puts it on the
+system clipboard and clears it after a timeout. Being precise about what this
+does and does not buy:
+
+*What it mitigates:*
+- **Shoulder-surfing and terminal scrollback** — the password is never rendered
+  to the screen at all.
+- **Leftover clipboard contents** — the password does not sit on the clipboard
+  indefinitely; it is removed after the timeout (default 20 s), on Ctrl-C, or on
+  `SIGTERM`.
+- **Clobbering the user's own clipboard** — the clear is skipped if the user
+  copied something else in the meantime, so it only ever removes its own value.
+
+*What it does NOT mitigate:*
+- **Other processes reading the clipboard during the window.** On essentially
+  every OS the clipboard is readable by any process running as the same user. A
+  malicious or curious process (the N2 out-of-scope set) can read the password at
+  any point before it is cleared. Auto-clear shortens this window; it does not
+  eliminate it.
+- **Clipboard-manager history.** Many desktops and clipboard-manager tools record
+  a *history* of clipboard entries. Our clear overwrites the *current* clipboard
+  but cannot reach into a manager's history database — a copied password may
+  persist there after we have cleared the live clipboard. Users with such tools
+  should exclude this tool or disable history.
+- **Clipboard sync across devices.** Some OSes mirror the clipboard to other
+  signed-in devices; the password may reach those before the clear, and our clear
+  does not necessarily propagate.
+- **Non-graceful termination.** If the process is `SIGKILL`ed, the machine loses
+  power, or it crashes, the clear never runs and the password remains on the
+  clipboard until something overwrites it.
+
+In short: `copy` is a convenience that reduces the *screen* and *dwell-time*
+exposure of N5, not a defense against a hostile process on the machine (that
+remains N2, out of scope).
 
 **N6 — Supply-chain compromise of the toolchain or dependencies.**
 A backdoored PyPI package, a typosquatted dependency, a compromised build of
@@ -224,7 +263,7 @@ undermining it.
 | N2 | Keylogger / malware | ❌ | Out of scope |
 | N3 | Live memory scraping / swap / core dump | ❌ | Best-effort only; Python cannot wipe memory (§6) |
 | N4 | Coercion / shoulder-surfing | ❌ | Out of scope |
-| N5 | Clipboard / terminal leakage of output | ⚠️ | Minimized later; not guaranteed |
+| N5 | Clipboard / terminal leakage of output | ⚠️ | Minimized (no echo, masked, clipboard auto-clear); not guaranteed — see N5.1 |
 | N6 | Supply-chain compromise | ⚠️ | Reduced (pinned + hashed deps), not eliminated |
 | N7 | Whole-vault rollback / deletion | ❌ | User backups |
 | N8 | Physical / micro-architectural side channels | ❌ | Rely on vetted primitives |

@@ -393,10 +393,49 @@ Each is a testable requirement for Stage 2.
 
 ---
 
-## 9. Open questions deferred to later stages (flagged, not hidden)
+## 9. Clipboard integration with auto-clear
 
-- Clipboard/terminal output minimization and clipboard auto-clear (THREAT_MODEL
-  N5) — output path, Stage ≥3.
+The `copy` command places a retrieved password on the system clipboard instead of
+printing it, then removes it. This is a security feature first: the clipboard is
+readable by other processes as the same user (THREAT_MODEL N5.1), so the design
+goal is to keep the secret there as briefly and as reliably-removed as the
+platform allows — not to treat the clipboard as safe.
+
+**Library — `pyperclip`, not our own subprocess calls.** pyperclip selects the
+platform mechanism (pbcopy/pbpaste on macOS, the Win32 API via ctypes on Windows,
+`xclip`/`xsel`/`wl-clipboard` on Linux). Delegating to it means we do not
+hand-maintain that platform matrix or parse binary output ourselves. The tradeoff
+is a Linux runtime dependency on one of those helper binaries; if none is present,
+pyperclip raises and we surface a clear `ClipboardUnavailableError` telling the
+user what to install. (Shelling out ourselves would trade this dependency for
+hand-rolled, less-tested platform code — a worse bargain for a security feature.)
+
+**Clear reliability — a `finally` block, foreground blocking.** `copy` blocks for
+the timeout (default 20 s), then clears, rather than backgrounding a clear it
+cannot supervise. The clear runs from a `finally`, so it fires on normal timeout
+completion, on Ctrl-C (`KeyboardInterrupt`), and on `SIGTERM` (a handler re-raises
+it as `KeyboardInterrupt`). It **cannot** fire on `SIGKILL`, a power loss, or a
+crash — in those cases the password remains on the clipboard until overwritten.
+This limit is stated to the user and in THREAT_MODEL N5.1 rather than hidden.
+
+**Clear only if unchanged.** Before clearing we read the clipboard back and clear
+only if it still equals the value we wrote (`clear_if_unchanged`). If the user
+copied something else during the window, we leave their content alone. There is a
+benign TOCTOU (they could copy between our read and our write), but the worst case
+is clearing a value that was ours a moment earlier — never destroying unrelated
+data we already observed.
+
+**What we clear *to*.** The clipboard is set to an empty string. On X11/Wayland
+this transfers selection ownership to a fresh helper process with empty content,
+so the password-holding helper relinquishes it. Note this does **not** erase any
+clipboard-manager *history* entry (N5.1) — outside our control.
+
+The auto-clear logic takes an injectable backend and sleep function, so it is
+unit-tested (including the "user changed the clipboard mid-window" and
+"interrupted before timeout" cases) without touching a real system clipboard.
+
+## 10. Open questions deferred to later stages (flagged, not hidden)
+
 - Auto-lock timeout tuning.
 - Whether to offer parameter *upgrade-on-open* (re-wrap DEK with stronger params
   when opening an old vault).

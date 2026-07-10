@@ -19,11 +19,13 @@ from __future__ import annotations
 import getpass
 import hmac
 import os
+import signal
 from typing import NoReturn
 
 import click
 
-from . import passwordgen
+from . import clipboard, passwordgen
+from .clipboard import ClipboardUnavailableError
 from .errors import (
     VaultAuthenticationError,
     VaultError,
@@ -211,6 +213,62 @@ def get(path: str, entry_id: str, show: bool) -> None:
         click.echo(f"Notes:    {entry.notes}")
     click.echo(f"Created:  {entry.created_at}")
     click.echo(f"Updated:  {entry.updated_at}")
+
+
+@cli.command()
+@click.argument("path", type=click.Path(dir_okay=False))
+@click.argument("entry_id")
+@click.option(
+    "--timeout",
+    default=clipboard.DEFAULT_TIMEOUT_SECONDS,
+    show_default=True,
+    type=click.IntRange(1, 600),
+    help="Seconds to keep the password on the clipboard before clearing it.",
+)
+def copy(path: str, entry_id: str, timeout: int) -> None:
+    """Copy an entry's password to the clipboard, then auto-clear it.
+
+    The password is never printed. This command blocks until the clipboard has
+    been cleared -- either after the timeout or when interrupted with Ctrl-C.
+    """
+    with _open_repository(path) as repo:
+        try:
+            entry = repo.get_entry(entry_id)
+        except EntryNotFoundError as exc:
+            _fail(str(exc))
+        password = entry.password
+
+    # Treat SIGTERM like Ctrl-C so a polite kill still triggers the clear path
+    # rather than leaving the password on the clipboard.
+    def _on_sigterm(signum, frame):
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGTERM, _on_sigterm)
+
+    def _announce() -> None:  # runs only after the copy actually succeeds
+        click.echo(
+            f"Copied password for {entry.service} / {entry.username} to the clipboard.\n"
+            f"It will be cleared in {timeout}s. Press Ctrl-C to clear now."
+        )
+
+    try:
+        result = clipboard.copy_and_autoclear(password, timeout, on_copied=_announce)
+    except ClipboardUnavailableError as exc:
+        _fail(
+            "no system clipboard available "
+            "(on Linux install xclip/xsel for X11, or wl-clipboard for Wayland): "
+            f"{exc}"
+        )
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+    if result.cleared:
+        click.echo("Clipboard cleared." if not result.interrupted else "Cleared early. Clipboard cleared.")
+    else:
+        click.echo(
+            "Clipboard changed since copy; left it untouched so your later copy is preserved.",
+            err=True,
+        )
 
 
 @cli.command()

@@ -88,7 +88,9 @@ securevault add my.vault github.com alice         # add an entry (prompts for it
 securevault add my.vault aws.example bob --generate  # or generate one instead
 securevault list my.vault                         # list entries — never prints passwords
 securevault get my.vault <entry-id>                # show an entry (password masked by default)
-securevault get my.vault <entry-id> --show         # reveal the password — the only command that does
+securevault get my.vault <entry-id> --show         # reveal the password — the only command that prints it
+securevault copy my.vault <entry-id>               # copy password to clipboard, auto-clear after 20s
+securevault copy my.vault <entry-id> --timeout 30  # ...with a custom clear timeout
 securevault update my.vault <entry-id> --username new-bob
 securevault delete my.vault <entry-id>
 securevault passwd my.vault                       # change the master password
@@ -106,18 +108,31 @@ pip install -e '.[dev]'
 pytest
 ```
 
-130 tests covering the cryptographic core, the file format, the CRUD layer, the
-CLI, and full create → close → reopen → retrieve workflows, including corrupted
-and tampered vault files, wrong-password handling, concurrent-access locking, and
-a canary check that no plaintext ever reaches disk.
+143 tests covering the cryptographic core, the file format, the CRUD layer, the
+CLI, clipboard auto-clear (including the "user copied something else" and
+"interrupted before timeout" cases), and full create → close → reopen → retrieve
+workflows, including corrupted and tampered vault files, wrong-password handling,
+concurrent-access locking, and a canary check that no plaintext ever reaches disk.
+
+## Clipboard
+
+`securevault copy` puts a password on the system clipboard instead of printing
+it, and clears it after a timeout (default 20 s), on Ctrl-C, or on `SIGTERM` — but
+only if the clipboard still holds that value, so it never clobbers something you
+copied in the meantime. This reduces *screen* and *dwell-time* exposure; it does
+**not** protect against a process reading the clipboard during the window, does
+not erase clipboard-manager history, and cannot clear if the process is killed
+uncatchably. See [THREAT_MODEL.md N5.1](THREAT_MODEL.md) for the full accounting.
+On Linux it requires `xclip`/`xsel` (X11) or `wl-clipboard` (Wayland); without
+one, `copy` fails with a clear message and the other commands are unaffected.
 
 ## Known limitations
 
 - **Memory is not securely wiped.** See "Does not protect against," above. This
   is the most significant limitation and is inherent to Python.
-- **No clipboard integration.** Retrieval is print-to-terminal only; a clipboard
-  copy with auto-clear was deferred rather than shipped half-done (see
-  DESIGN.md §9).
+- **The clipboard is not a safe place for a secret.** `copy` shortens the window,
+  but any same-user process can read the clipboard while a password is on it (see
+  above / N5.1).
 - **No multi-device sync.** By design — see the threat model — but it means no
   built-in way to share a vault across machines.
 - **Vault-level locking, not record-level.** Two concurrent `securevault`
@@ -134,8 +149,6 @@ a canary check that no plaintext ever reaches disk.
 - Add an optional OS keychain–backed session cache so the master password isn't
   re-entered for short-lived successive commands, without weakening the
   single-unlock model.
-- Clipboard copy with a timed auto-clear, opt-in and clearly labeled as leaving
-  the vault's protection.
 - A machine-readable export/import path (still local-only) for migrating
   vaults, with the same JSON-only serialization discipline.
 - An external audit — this codebase is small and deliberately scoped
