@@ -1,0 +1,6 @@
+# Runtime dependencies, version-pinned. For a hardened install, regenerate this
+# with hashes (e.g. `pip-compile --generate-hashes`) and install with
+# `pip install --require-hashes -r requirements.txt` to defend against a
+# tampered or substituted package (see THREAT_MODEL.md, N6).
+argon2-cffi==25.1.0
+cryptography==43.0.3

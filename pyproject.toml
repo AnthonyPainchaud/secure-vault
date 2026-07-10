@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "securevault"
+version = "0.1.0"
+description = "Local encrypted password vault -- cryptographic core"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "argon2-cffi==25.1.0",
+    "cryptography==43.0.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
