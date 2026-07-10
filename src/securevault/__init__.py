@@ -1,8 +1,11 @@
-"""securevault -- cryptographic core for a local encrypted password vault.
+"""securevault -- a local, offline, encrypted password vault.
 
-This package provides key derivation, authenticated encryption, the on-disk
-container format, and the envelope create/open/save flow. It does not implement a
-CLI or an entry/record model; the vault body is treated as opaque bytes.
+The cryptographic core (key derivation, authenticated encryption, the on-disk
+container format, and the envelope create/open/save flow) treats the vault body
+as opaque bytes and is exported from here unchanged. The entry model
+(`securevault.entries`), CRUD layer (`securevault.repository`), password
+generator (`securevault.passwordgen`), and CLI (`securevault.cli`) are built on
+top of it and imported separately -- the crypto core has no knowledge of them.
 """
 
 from .errors import VaultAuthenticationError, VaultError, VaultFormatError

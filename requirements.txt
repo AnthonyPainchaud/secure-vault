@@ -4,3 +4,4 @@
 # tampered or substituted package (see THREAT_MODEL.md, N6).
 argon2-cffi==25.1.0
 cryptography==43.0.3
+click==8.1.8
