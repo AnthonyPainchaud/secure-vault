@@ -34,3 +34,11 @@ class VaultAuthenticationError(VaultError):
 
     def __init__(self, message: str | None = None) -> None:
         super().__init__(message or self._MESSAGE)
+
+
+class VaultLockedError(VaultError):
+    """Another process holds the lock on this vault.
+
+    Raised instead of racing a concurrent writer, so two processes cannot
+    interleave writes and lose each other's changes.
+    """

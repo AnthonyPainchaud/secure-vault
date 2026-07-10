@@ -20,6 +20,7 @@ from . import storage, vault
 from .entries import Entry, deserialize_entries, new_entry_id, now_iso, serialize_entries
 from .errors import VaultError
 from .kdf import Argon2Parameters
+from .locking import FileLock
 
 
 class EntryNotFoundError(VaultError):
@@ -29,9 +30,10 @@ class EntryNotFoundError(VaultError):
 
 
 class VaultRepository:
-    def __init__(self, path: str, unlocked: vault.UnlockedVault) -> None:
+    def __init__(self, path: str, unlocked: vault.UnlockedVault, lock: FileLock) -> None:
         self._path = path
         self._unlocked = unlocked
+        self._lock = lock
         self._entries: list[Entry] = deserialize_entries(unlocked.read())
         self._closed = False
 
@@ -50,16 +52,28 @@ class VaultRepository:
         """
         if os.path.exists(path):
             raise FileExistsError(f"{path} already exists")
-        data = vault.create(master_password, serialize_entries([]), params)
-        storage.write_atomic(path, data)
-        unlocked = vault.open_vault(master_password, data)
-        return cls(path, unlocked)
+        lock = FileLock(path)
+        lock.acquire()
+        try:
+            data = vault.create(master_password, serialize_entries([]), params)
+            storage.write_atomic(path, data)
+            unlocked = vault.open_vault(master_password, data)
+            return cls(path, unlocked, lock)
+        except BaseException:
+            lock.release()
+            raise
 
     @classmethod
     def open(cls, path: str, master_password: bytes) -> "VaultRepository":
-        data = storage.read(path)
-        unlocked = vault.open_vault(master_password, data)
-        return cls(path, unlocked)
+        lock = FileLock(path)
+        lock.acquire()  # before reading, so no concurrent writer can slip in
+        try:
+            data = storage.read(path)
+            unlocked = vault.open_vault(master_password, data)
+            return cls(path, unlocked, lock)
+        except BaseException:
+            lock.release()
+            raise
 
     # -- queries --------------------------------------------------------
 
@@ -120,6 +134,11 @@ class VaultRepository:
         if self._closed:
             return
         self._unlocked.close()
+        # Drop references to the decrypted entries. Their str fields cannot be
+        # wiped (see THREAT_MODEL.md N3 / SECURITY_REVIEW.md), but releasing the
+        # references lets the garbage collector reclaim them promptly.
+        self._entries = []
+        self._lock.release()
         self._closed = True
 
     def __enter__(self) -> "VaultRepository":

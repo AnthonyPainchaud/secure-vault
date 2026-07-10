@@ -17,13 +17,19 @@ cryptographic primitives directly. Two rules hold everywhere in this module:
 from __future__ import annotations
 
 import getpass
+import hmac
 import os
 from typing import NoReturn
 
 import click
 
 from . import passwordgen
-from .errors import VaultAuthenticationError, VaultError, VaultFormatError
+from .errors import (
+    VaultAuthenticationError,
+    VaultError,
+    VaultFormatError,
+    VaultLockedError,
+)
 from .repository import EntryNotFoundError, VaultRepository
 
 # Heuristic only (see passwordgen.estimate_entropy_bits) -- used to warn, never
@@ -37,13 +43,25 @@ def _fail(message: str) -> NoReturn:
     raise SystemExit(1)
 
 
+def _passwords_match(a: str, b: str) -> bool:
+    """Constant-time comparison of two typed passwords.
+
+    These are the user's own two inputs, not an attacker-observable oracle, so a
+    timing side channel here is not a realistic threat -- but comparing on the
+    encoded bytes with ``hmac.compare_digest`` costs nothing, keeps the codebase
+    free of ``==`` on secrets, and (unlike ``==`` or ``compare_digest`` on a
+    str) handles non-ASCII passwords without raising.
+    """
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
 def _read_master_password(*, confirm: bool) -> bytes:
     password = getpass.getpass("Master password: ")
     if not password:
         _fail("master password must not be empty")
     if confirm:
         again = getpass.getpass("Confirm master password: ")
-        if password != again:
+        if not _passwords_match(password, again):
             _fail("passwords did not match")
         bits = passwordgen.estimate_entropy_bits(password)
         if bits < _WEAK_MASTER_PASSWORD_BITS:
@@ -66,6 +84,8 @@ def _open_repository(path: str) -> VaultRepository:
         return VaultRepository.open(path, password.encode("utf-8"))
     except VaultAuthenticationError:
         _fail("wrong master password, or the vault is corrupt or tampered")
+    except VaultLockedError:
+        _fail("this vault is already open in another process")
     except VaultFormatError as exc:
         _fail(f"not a valid vault file: {exc}")
 
@@ -108,7 +128,7 @@ def _prompt_entry_password(*, generate: bool, policy: passwordgen.PasswordPolicy
             _fail(str(exc))
     first = getpass.getpass("Entry password: ")
     second = getpass.getpass("Confirm entry password: ")
-    if first != second:
+    if not _passwords_match(first, second):
         _fail("passwords did not match")
     if not first:
         _fail("entry password must not be empty")

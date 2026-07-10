@@ -13,3 +13,4 @@ dist/
 # Vault data must never be committed
 *.dat
 vault.dat
+*.lock
